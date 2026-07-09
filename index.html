@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Push-up Unlock</title>
+<style>
+  :root {
+    --bg: #0d1117; --fg: #e6edf3; --dim: #8b949e;
+    --accent: #3fb950; --warn: #f0c674; --card: #161b22;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .screen { display: none; min-height: 100%; }
+  .screen.active { display: flex; flex-direction: column; }
+
+  /* ---------- Home ---------- */
+  #home { padding: max(24px, env(safe-area-inset-top)) 24px 40px; gap: 18px; align-items: stretch; }
+  #home h1 { font-size: 2rem; margin-top: 24px; }
+  #home p.tag { color: var(--dim); }
+  .card { background: var(--card); border: 1px solid #30363d; border-radius: 14px; padding: 16px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; }
+  .row label { color: var(--fg); }
+  .row input { background: #0d1117; color: var(--fg); border: 1px solid #30363d;
+    border-radius: 8px; padding: 8px 10px; font-size: 1rem; width: 9em; text-align: right; }
+  .row input#reps { width: 4.5em; }
+  button.big { font-size: 1.25rem; font-weight: 700; padding: 18px; border: none;
+    border-radius: 14px; background: var(--accent); color: #04140a; width: 100%; }
+  button.ghost { background: none; border: 1px solid #30363d; color: var(--dim);
+    border-radius: 12px; padding: 12px; font-size: 1rem; width: 100%; }
+  details { margin-top: 6px; }
+  summary { cursor: pointer; font-weight: 600; padding: 10px 0; }
+  .guide { color: var(--dim); font-size: 0.95rem; line-height: 1.55; }
+  .guide h3 { color: var(--fg); margin: 16px 0 6px; font-size: 1.02rem; }
+  .guide ol { padding-left: 20px; }
+  .guide li { margin: 6px 0; }
+  .guide code { background: #21262d; color: #e6edf3; border-radius: 5px; padding: 1px 6px; font-size: 0.9em; }
+  .err { color: #ff7b72; font-size: 0.95rem; display: none; }
+
+  /* ---------- Workout ---------- */
+  #workout { position: fixed; inset: 0; background: #000; }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  #stage.mirror video, #stage.mirror canvas { transform: scaleX(-1); }
+  video, canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  #hud-top { position: absolute; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 16px 12px;
+    display: flex; justify-content: space-between; align-items: center;
+    background: linear-gradient(#000c, #0000); }
+  #count { font-size: 2.6rem; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+  #hud-top .btns { display: flex; gap: 10px; }
+  #hud-top button { background: #ffffff22; color: #fff; border: none; border-radius: 10px;
+    padding: 10px 14px; font-size: 1rem; }
+  #status { position: absolute; left: 0; right: 0; bottom: max(28px, env(safe-area-inset-bottom));
+    text-align: center; font-size: 1.3rem; font-weight: 700; color: var(--warn);
+    text-shadow: 0 1px 6px #000; padding: 0 16px; }
+  #loading { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px;
+    align-items: center; justify-content: center; background: #000d; font-size: 1.1rem; color: var(--dim); }
+
+  /* ---------- Done ---------- */
+  #done { align-items: center; justify-content: center; gap: 20px; padding: 24px; text-align: center; }
+  #done h1 { color: var(--accent); font-size: 3rem; }
+  #done p { color: var(--dim); max-width: 30em; }
+</style>
+</head>
+<body>
+
+<!-- ================= HOME ================= -->
+<section id="home" class="screen active">
+  <h1>💪 Push-up Unlock</h1>
+  <p class="tag">Instagram &amp; X stay locked until the camera sees real push-ups.</p>
+
+  <div class="card">
+    <div class="row">
+      <label for="reps">Push-ups required</label>
+      <input id="reps" type="number" inputmode="numeric" min="1" max="100" value="10">
+    </div>
+    <div class="row">
+      <label for="shortcut">Unlock Shortcut name</label>
+      <input id="shortcut" type="text" value="Pushups Done" autocapitalize="words">
+    </div>
+    <div class="row">
+      <label for="frontcam">Use front camera</label>
+      <input id="frontcam" type="checkbox" checked style="width:auto; transform:scale(1.4);">
+    </div>
+  </div>
+
+  <button class="big" id="start">Start push-ups</button>
+  <p class="err" id="camerr"></p>
+  <p class="guide" style="text-align:center">Prop the phone to your <b>side</b>, ~2&nbsp;m away, whole body in frame.</p>
+
+  <details>
+    <summary>📱 One-time iPhone setup (Shortcuts)</summary>
+    <div class="guide">
+      <p>This page only counts push-ups. Two Shortcuts + two Automations make it
+      gate Instagram/X. Everything below is done in the built-in
+      <b>Shortcuts</b> app — no other downloads, no accounts.</p>
+
+      <h3>Shortcut 1 — "Pushups Done" (grants 30 min)</h3>
+      <ol>
+        <li>Shortcuts app → <b>+</b> → name it exactly <code>Pushups Done</code>
+            (must match the name in the box above).</li>
+        <li>Add action <b>Date</b> → Current Date.</li>
+        <li>Add action <b>Adjust Date</b> → "Add <code>30</code> minutes to Date".
+            (This is your unlock length — change it here.)</li>
+        <li>Add action <b>Format Date</b> → Date Format: <b>ISO 8601</b>,
+            Time: ISO 8601 (include time).</li>
+        <li>Add action <b>Save File</b> → turn <b>Ask Where To Save OFF</b> →
+            Service: iCloud Drive → path <code>/Shortcuts/pushup-unlock.txt</code> →
+            turn <b>Overwrite If File Exists ON</b>.</li>
+        <li>Add action <b>Open App</b> → Instagram.</li>
+      </ol>
+
+      <h3>Shortcut 2 — "Pushup Gate" (runs when you open the app)</h3>
+      <ol>
+        <li>New shortcut, name it <code>Pushup Gate</code>.</li>
+        <li>Add action <b>Get File</b> → iCloud Drive →
+            path <code>/Shortcuts/pushup-unlock.txt</code> →
+            turn <b>Show Document Picker OFF</b>, and turn ON
+            "Error If Not Found" → then tap the action's arrow and
+            wrap it: if it errors the first run, that's fine — see step 5.</li>
+        <li>Add action <b>Get Dates from Input</b> (input: File).</li>
+        <li>Add action <b>If</b> → Dates → Condition: <b>is in the past</b> …
+            iOS wording: choose <b>If [Date] is before [Current Date]</b>.</li>
+        <li>Inside <b>If</b> (expired → locked): add <b>Open URLs</b> →
+            <code id="pageurl">THIS_PAGE_URL</code> (long-press → copy this page's
+            address from Safari). Inside <b>Otherwise</b>: nothing — the app
+            just opens. If the file doesn't exist yet, Shortcuts treats it as
+            locked, which is correct.</li>
+      </ol>
+
+      <h3>Automations (the actual gate)</h3>
+      <ol>
+        <li>Shortcuts app → <b>Automation</b> tab → <b>+</b> →
+            <b>App</b> → Choose <b>Instagram</b> → "Is Opened" →
+            <b>Run Immediately</b> (not "Ask Before Running").</li>
+        <li>Next screen: pick shortcut <b>Pushup Gate</b>.</li>
+        <li>Repeat for the <b>X</b> app.</li>
+      </ol>
+
+      <h3>How it flows</h3>
+      <p>Open Instagram → automation runs the Gate → unlock expired → Safari
+      opens this page over the app → do your push-ups → the page runs
+      <code>Pushups Done</code> → 30-min pass is written → Instagram reopens.
+      When the pass expires, the next app-open kicks you back here. To pause
+      the whole system, toggle the two automations off in the Shortcuts app.</p>
+
+      <h3>Honest limitations</h3>
+      <p>Like the Mac version, this is friction, not a prison: you can swipe
+      back to the app quickly or disable the automation. iOS won't let a
+      homemade phone-only tool hard-block apps — that needs Apple's
+      Screen&nbsp;Time entitlement. For harder enforcement, add a Screen Time
+      app limit with someone else holding the passcode, on top of this.</p>
+    </div>
+  </details>
+</section>
+
+<!-- ================= WORKOUT ================= -->
+<section id="workout" class="screen">
+  <div id="stage" class="mirror">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="hud-top">
+    <div id="count">0/10</div>
+    <div class="btns">
+      <button id="flip">🔄</button>
+      <button id="quit">✕</button>
+    </div>
+  </div>
+  <div id="status">Loading…</div>
+  <div id="loading">⏳ Loading pose model…<br><span style="font-size:.85em">(first load downloads ~6 MB)</span></div>
+</section>
+
+<!-- ================= DONE ================= -->
+<section id="done" class="screen">
+  <h1>UNLOCKED!</h1>
+  <p id="done-msg">Nice work. Opening your unlock Shortcut…</p>
+  <button class="big" id="runshortcut">Open Instagram (run Shortcut)</button>
+  <button class="ghost" id="again">Back</button>
+</section>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver } from
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+/* ---------- Tuning (mirrors detector.py) ---------- */
+const ELBOW_DOWN_DEG = 95, ELBOW_UP_DEG = 150;
+const TORSO_MAX_TILT_DEG = 45, MIN_VISIBILITY = 0.5;
+const L_SH = 11, R_SH = 12, L_EL = 13, R_EL = 14, L_WR = 15, R_WR = 16, L_HIP = 23, R_HIP = 24;
+const SKELETON = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[24,26],[25,27],[26,28]];
+
+/* ---------- Elements / settings ---------- */
+const $ = id => document.getElementById(id);
+const screens = { home: $("home"), workout: $("workout"), done: $("done") };
+function show(name) { for (const k in screens) screens[k].classList.toggle("active", k === name); }
+
+const settings = {
+  get reps() { return Math.max(1, parseInt($("reps").value) || 10); },
+  get shortcut() { return $("shortcut").value.trim() || "Pushups Done"; },
+  get front() { return $("frontcam").checked; },
+};
+for (const [key, el] of [["reps", $("reps")], ["shortcut", $("shortcut")], ["front", $("frontcam")]]) {
+  const saved = localStorage.getItem("pu_" + key);
+  if (saved !== null) { if (el.type === "checkbox") el.checked = saved === "1"; else el.value = saved; }
+  el.addEventListener("change", () =>
+    localStorage.setItem("pu_" + key, el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value));
+}
+$("pageurl").textContent = location.href;
+
+/* ---------- Pose helpers (ported from detector.py) ---------- */
+const vis = p => p.visibility ?? 1.0;
+function angle(a, b, c) {
+  const v1 = [a.x - b.x, a.y - b.y], v2 = [c.x - b.x, c.y - b.y];
+  const n1 = Math.hypot(...v1), n2 = Math.hypot(...v2);
+  if (n1 * n2 === 0) return 180;
+  const cos = Math.max(-1, Math.min(1, (v1[0]*v2[0] + v1[1]*v2[1]) / (n1 * n2)));
+  return Math.acos(cos) * 180 / Math.PI;
+}
+function pickSide(lm) {
+  let best = null, bestVis = 0;
+  for (const idx of [[L_SH, L_EL, L_WR, L_HIP], [R_SH, R_EL, R_WR, R_HIP]]) {
+    const pts = idx.map(i => lm[i]);
+    const v = Math.min(...pts.map(vis));
+    if (v > bestVis) { best = pts; bestVis = v; }
+  }
+  return bestVis < MIN_VISIBILITY ? null : best;
+}
+function inPushupPosture(sh, wr, hip) {
+  const tilt = Math.atan2(Math.abs(hip.y - sh.y), Math.abs(hip.x - sh.x) + 1e-6) * 180 / Math.PI;
+  return tilt <= TORSO_MAX_TILT_DEG && wr.y > sh.y;
+}
+
+/* ---------- Audio cue ---------- */
+let actx = null;
+function beep(freq = 880, ms = 120) {
+  try {
+    actx ??= new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = freq; o.connect(g); g.connect(actx.destination);
+    g.gain.setValueAtTime(0.25, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + ms / 1000);
+    o.start(); o.stop(actx.currentTime + ms / 1000);
+  } catch {}
+}
+
+/* ---------- Workout loop ---------- */
+let landmarker = null, stream = null, running = false, wakeLock = null;
+
+async function getLandmarker() {
+  if (landmarker) return landmarker;
+  const files = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  landmarker = await PoseLandmarker.createFromOptions(files, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+      delegate: "GPU",
+    },
+    runningMode: "VIDEO", numPoses: 1,
+    minPoseDetectionConfidence: 0.5, minTrackingConfidence: 0.5,
+  });
+  return landmarker;
+}
+
+async function startWorkout() {
+  const target = settings.reps;
+  $("camerr").style.display = "none";
+  show("workout");
+  $("loading").style.display = "flex";
+  $("count").textContent = `0/${target}`;
+  $("stage").classList.toggle("mirror", settings.front);
+
+  try {
+    const lmk = await getLandmarker();
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: settings.front ? "user" : "environment",
+               width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+    const video = $("video");
+    video.srcObject = stream;
+    await video.play();
+    try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+
+    $("loading").style.display = "none";
+    running = true;
+    let reps = 0, phase = "up", lastTs = -1;
+    const canvas = $("overlay"), ctx = canvas.getContext("2d");
+
+    const tick = () => {
+      if (!running) return;
+      if (video.videoWidth && (canvas.width !== video.videoWidth)) {
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      }
+      const ts = performance.now();
+      let status = "No body detected";
+      if (video.videoWidth && ts > lastTs) {
+        lastTs = ts;
+        const res = lmk.detectForVideo(video, ts);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (res.landmarks?.length) {
+          const lm = res.landmarks[0];
+          drawSkeleton(ctx, lm, canvas.width, canvas.height);
+          const side = pickSide(lm);
+          if (side) {
+            const [sh, el, wr, hip] = side;
+            const elbow = angle(sh, el, wr);
+            if (!inPushupPosture(sh, wr, hip)) {
+              status = "Get into push-up position (side view)";
+            } else if (phase === "up") {
+              status = "Go DOWN";
+              if (elbow < ELBOW_DOWN_DEG) { phase = "down"; beep(440, 80); }
+            } else {
+              status = "Push UP!";
+              if (elbow > ELBOW_UP_DEG) {
+                reps++; phase = "up"; beep(880, 120);
+                $("count").textContent = `${reps}/${target}`;
+                if (reps >= target) { finish(); return; }
+              }
+            }
+          } else {
+            status = "Move so your full side is visible";
+          }
+        }
+      }
+      $("status").textContent = status;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } catch (e) {
+    stopCamera();
+    show("home");
+    const msg = e.name === "NotAllowedError"
+      ? "Camera permission denied. Allow camera access for this site in iOS Settings → Safari (or the aA menu → Website Settings)."
+      : `Could not start: ${e.message || e}`;
+    $("camerr").textContent = msg;
+    $("camerr").style.display = "block";
+  }
+}
+
+function drawSkeleton(ctx, lm, w, h) {
+  ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,180,255,.9)"; ctx.fillStyle = "rgba(255,140,0,.95)";
+  for (const [a, b] of SKELETON) {
+    ctx.beginPath();
+    ctx.moveTo(lm[a].x * w, lm[a].y * h);
+    ctx.lineTo(lm[b].x * w, lm[b].y * h);
+    ctx.stroke();
+  }
+  for (const [a] of SKELETON) {
+    ctx.beginPath(); ctx.arc(lm[a].x * w, lm[a].y * h, 5, 0, 7); ctx.fill();
+  }
+}
+
+function stopCamera() {
+  running = false;
+  stream?.getTracks().forEach(t => t.stop());
+  stream = null;
+  wakeLock?.release().catch(() => {}); wakeLock = null;
+}
+
+function shortcutURL() {
+  return `shortcuts://run-shortcut?name=${encodeURIComponent(settings.shortcut)}`;
+}
+
+function finish() {
+  stopCamera();
+  beep(880, 100); setTimeout(() => beep(1175, 250), 140);
+  show("done");
+  $("done-msg").textContent = `Nice work. Running Shortcut “${settings.shortcut}”…`;
+  setTimeout(() => { location.href = shortcutURL(); }, 1200);
+}
+
+/* ---------- Wire up ---------- */
+$("start").onclick = startWorkout;
+$("quit").onclick = () => { stopCamera(); show("home"); };
+$("flip").onclick = () => { $("frontcam").checked = !settings.front;
+  localStorage.setItem("pu_front", settings.front ? "1" : "0");
+  stopCamera(); startWorkout(); };
+$("runshortcut").onclick = () => { location.href = shortcutURL(); };
+$("again").onclick = () => show("home");
+</script>
+</body>
+</html>
