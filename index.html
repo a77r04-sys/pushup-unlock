@@ -124,6 +124,13 @@
   <div class="card">
     <h2>Camera &amp; Shortcut</h2>
     <div class="row">
+      <label>Camera position</label>
+      <div class="presets" style="padding:0">
+        <button data-view="front">In front</button>
+        <button data-view="side">Side</button>
+      </div>
+    </div>
+    <div class="row">
       <label for="shortcut">Unlock Shortcut name</label>
       <input id="shortcut" type="text" value="Pushups Done" autocapitalize="words">
     </div>
@@ -135,8 +142,7 @@
 
   <button class="big" id="start">Start push-ups</button>
   <p class="err" id="camerr"></p>
-  <p class="guide" style="text-align:center">Prop the phone to your <b>side</b>, ~2&nbsp;m away,
-    whole body in frame. Reps only count with real depth — shoulders must travel down and up.</p>
+  <p class="guide" style="text-align:center" id="tip"></p>
 
   <details>
     <summary>📱 One-time iPhone setup (Shortcuts)</summary>
@@ -243,15 +249,19 @@ import { PoseLandmarker, FilesetResolver } from
 /* ---------- Tuning ----------
    Stricter than detector.py: a rep needs the elbow angle to cross both
    thresholds on a SMOOTHED signal, held for CONFIRM_FRAMES, with the
-   shoulder actually travelling down (MIN_DROP of torso length), hands
-   staying planted (MAX_WRIST_DRIFT), and realistic timing. */
-const ELBOW_DOWN_DEG = 100, ELBOW_UP_DEG = 150;
+   shoulders actually travelling down (MIN_DROP of body scale), hands
+   staying planted (MAX_WRIST_DRIFT), and realistic timing.
+   Side view scales by torso length (one arm); front view scales by
+   shoulder width and averages both arms (hips are often out of frame). */
+const ELBOW_UP_DEG = 150;
+const ELBOW_DOWN_SIDE = 100, ELBOW_DOWN_FRONT = 110; // head-on projection flattens the angle
 const TORSO_MAX_TILT_DEG = 40, MIN_VISIBILITY = 0.6;
 const SMOOTH = 0.5;            // EMA factor for elbow angle
 const POSTURE_FRAMES = 5;      // stable posture frames before reps can count
 const CONFIRM_FRAMES = 3;      // frames past a threshold to switch phase
-const MIN_DROP = 0.15;         // shoulder must drop this × torso length
-const MAX_WRIST_DRIFT = 0.35;  // wrist may move at most this × torso length
+const MIN_DROP_SIDE = 0.15;    // shoulder drop × torso length
+const MIN_DROP_FRONT = 0.20;   // shoulder drop × shoulder width
+const MAX_WRIST_DRIFT = 0.35;  // wrists may move at most this × body scale
 const MIN_DOWN_MS = 250;       // min time spent at the bottom
 const MIN_REP_MS = 700;        // min time between counted reps
 const L_SH = 11, R_SH = 12, L_EL = 13, R_EL = 14, L_WR = 15, R_WR = 16, L_HIP = 23, R_HIP = 24;
@@ -268,6 +278,7 @@ const settings = {
   get minsper() { return Math.max(1, parseInt($("minsper").value) || 3); },
   get shortcut() { return $("shortcut").value.trim() || "Pushups Done"; },
   get front() { return $("frontcam").checked; },
+  get view() { return localStorage.getItem("pu_view") || "front"; },
 };
 for (const [key, el] of [["reps", $("reps")], ["minsper", $("minsper")],
                          ["shortcut", $("shortcut")], ["front", $("frontcam")],
@@ -295,6 +306,20 @@ $("minpresets").addEventListener("click", e => {
   refreshEarnNote();
 });
 refreshEarnNote();
+
+/* Camera position (front = phone propped facing you, side = classic side view) */
+const viewBtns = document.querySelectorAll("[data-view]");
+function setView(v) {
+  localStorage.setItem("pu_view", v);
+  viewBtns.forEach(b => b.classList.toggle("sel", b.dataset.view === v));
+  $("tip").innerHTML = v === "front"
+    ? "Prop the phone on the floor <b>in front of you</b>, leaning back so it sees you — " +
+      "head, arms and hands in frame. Reps only count with real depth."
+    : "Prop the phone to your <b>side</b>, ~2&nbsp;m away, whole body in frame. " +
+      "Reps only count with real depth.";
+}
+viewBtns.forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
+setView(settings.view);
 
 /* ---------- Shortcut bridge ----------
    The page passes earned MINUTES as the Shortcut's text input; the Shortcut
@@ -336,6 +361,8 @@ function angle(a, b, c) {
   const cos = Math.max(-1, Math.min(1, (v1[0]*v2[0] + v1[1]*v2[1]) / (n1 * n2)));
   return Math.acos(cos) * 180 / Math.PI;
 }
+const FRONT_IDX = [L_SH, R_SH, L_EL, R_EL, L_WR, R_WR];
+const avg = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 function sideVis(lm, key) { return Math.min(...SIDES[key].map(i => vis(lm[i]))); }
 function getSide(lm, key) { return SIDES[key].map(i => lm[i]); }
 function inPushupPosture(sh, wr, hip) {
@@ -386,14 +413,49 @@ async function startWorkout() {
     const canvas = $("overlay"), ctx = canvas.getContext("2d");
 
     /* rep-detection state */
+    const mode = settings.view;
     let reps = 0, phase = "up", lastTs = -1;
-    let sideKey = null;          // stick to one arm while posture holds
+    let sideKey = null;          // side view: stick to one arm while it stays visible
     let emaElbow = null;         // smoothed elbow angle
     let postureCount = 0, confirm = 0;
-    let top = null;              // {shY, wrX, wrY} at last extended position
+    let top = null;              // {shY, wr, scale} at last extended position
     let downAt = 0, lastRepAt = 0;
 
     const resetRep = () => { phase = "up"; confirm = 0; top = null; emaElbow = null; };
+
+    /* Extract per-frame measurements for the active camera position, or an
+       err message when the body isn't in a countable push-up posture. */
+    const measure = (lm) => {
+      if (mode === "side") {
+        if (!sideKey || sideVis(lm, sideKey) < MIN_VISIBILITY)
+          sideKey = sideVis(lm, "L") >= sideVis(lm, "R") ? "L" : "R";
+        if (sideVis(lm, sideKey) < MIN_VISIBILITY)
+          return { err: "Move so your full side is visible" };
+        const [sh, el, wr, hip] = getSide(lm, sideKey);
+        if (!inPushupPosture(sh, wr, hip))
+          return { err: "Get into push-up position (side view)" };
+        return { elbow: angle(sh, el, wr), shY: sh.y, wr: { x: wr.x, y: wr.y },
+                 scale: Math.max(dist(sh, hip), 1e-6),
+                 minDrop: MIN_DROP_SIDE, downDeg: ELBOW_DOWN_SIDE };
+      }
+      /* front view: both arms, scaled by shoulder width (hips often out of frame) */
+      if (Math.min(...FRONT_IDX.map(i => vis(lm[i]))) < MIN_VISIBILITY)
+        return { err: "Face the camera — shoulders, elbows and hands in frame" };
+      const lsh = lm[L_SH], rsh = lm[R_SH], lwr = lm[L_WR], rwr = lm[R_WR];
+      const width = Math.max(dist(lsh, rsh), 1e-6);
+      if (width < 0.10) return { err: "Move closer to the camera" };
+      if (Math.abs(lsh.y - rsh.y) > 0.5 * width)
+        return { err: "Square up to the camera" };
+      if (lwr.y <= lsh.y || rwr.y <= rsh.y)
+        return { err: "Get into push-up position facing the camera" };
+      /* hips clearly visible well below the shoulders = body is upright, not planked */
+      if (Math.min(vis(lm[L_HIP]), vis(lm[R_HIP])) > 0.5 &&
+          (lm[L_HIP].y + lm[R_HIP].y - lsh.y - rsh.y) / 2 > 1.1 * width)
+        return { err: "Get into push-up position facing the camera" };
+      return { elbow: (angle(lsh, lm[L_EL], lwr) + angle(rsh, lm[R_EL], rwr)) / 2,
+               shY: (lsh.y + rsh.y) / 2, wr: avg(lwr, rwr),
+               scale: width, minDrop: MIN_DROP_FRONT, downDeg: ELBOW_DOWN_FRONT };
+    };
 
     const tick = () => {
       if (!running) return;
@@ -410,62 +472,50 @@ async function startWorkout() {
           const lm = res.landmarks[0];
           drawSkeleton(ctx, lm, canvas.width, canvas.height);
 
-          /* pick an arm and stick with it while it stays visible */
-          if (!sideKey || sideVis(lm, sideKey) < MIN_VISIBILITY)
-            sideKey = sideVis(lm, "L") >= sideVis(lm, "R") ? "L" : "R";
-
-          if (sideVis(lm, sideKey) < MIN_VISIBILITY) {
-            status = "Move so your full side is visible";
+          const m = measure(lm);
+          if (m.err) {
+            status = m.err;
             postureCount = 0; resetRep();
+          } else if (++postureCount < POSTURE_FRAMES) {
+            status = "Hold it… get set";
           } else {
-            const [sh, el, wr, hip] = getSide(lm, sideKey);
-            const torso = Math.max(dist(sh, hip), 1e-6);
+            emaElbow = emaElbow === null ? m.elbow : SMOOTH * m.elbow + (1 - SMOOTH) * emaElbow;
 
-            if (!inPushupPosture(sh, wr, hip)) {
-              status = "Get into push-up position (side view)";
-              postureCount = 0; resetRep();
-            } else if (++postureCount < POSTURE_FRAMES) {
-              status = "Hold it… get set";
-            } else {
-              const raw = angle(sh, el, wr);
-              emaElbow = emaElbow === null ? raw : SMOOTH * raw + (1 - SMOOTH) * emaElbow;
+            /* refresh the "top" reference whenever arms are extended */
+            if (phase === "up" && emaElbow > ELBOW_UP_DEG)
+              top = { shY: m.shY, wr: m.wr, scale: m.scale };
 
-              /* refresh the "top" reference whenever arms are extended */
-              if (phase === "up" && emaElbow > ELBOW_UP_DEG)
-                top = { shY: sh.y, wrX: wr.x, wrY: wr.y };
+            const drift = top ? dist(m.wr, top.wr) / top.scale : 0;
+            const drop = top ? (m.shY - top.shY) / top.scale : 0;
 
-              const drift = top ? Math.hypot(wr.x - top.wrX, wr.y - top.wrY) / torso : 0;
-              const drop = top ? (sh.y - top.shY) / torso : 0;
-
-              if (phase === "up") {
-                status = "Go DOWN";
-                if (emaElbow < ELBOW_DOWN_DEG) {
-                  if (!top) status = "Extend your arms first";
-                  else if (drift > MAX_WRIST_DRIFT) { status = "Keep your hands planted"; confirm = 0; }
-                  else if (drop < MIN_DROP) { status = "Lower — chest toward the floor"; confirm = 0; }
-                  else if (++confirm >= CONFIRM_FRAMES) {
-                    phase = "down"; confirm = 0; downAt = ts; beep(440, 80);
+            if (phase === "up") {
+              status = "Go DOWN";
+              if (emaElbow < m.downDeg) {
+                if (!top) status = "Extend your arms first";
+                else if (drift > MAX_WRIST_DRIFT) { status = "Keep your hands planted"; confirm = 0; }
+                else if (drop < m.minDrop) { status = "Lower — chest toward the floor"; confirm = 0; }
+                else if (++confirm >= CONFIRM_FRAMES) {
+                  phase = "down"; confirm = 0; downAt = ts; beep(440, 80);
+                }
+              } else confirm = 0;
+            }
+            if (phase === "down") {
+              status = "Push UP!";
+              if (drift > MAX_WRIST_DRIFT) {
+                status = "Hands moved — rep cancelled";
+                resetRep();
+              } else if (emaElbow > ELBOW_UP_DEG) {
+                if (++confirm >= CONFIRM_FRAMES) {
+                  confirm = 0; phase = "up"; top = { shY: m.shY, wr: m.wr, scale: m.scale };
+                  if (ts - downAt >= MIN_DOWN_MS && ts - lastRepAt >= MIN_REP_MS) {
+                    reps++; lastRepAt = ts; beep(880, 120);
+                    $("count").textContent = `${reps}/${target}`;
+                    if (reps >= target) { finish(reps); return; }
+                  } else {
+                    status = "Too fast — slow down";
                   }
-                } else confirm = 0;
-              }
-              if (phase === "down") {
-                status = "Push UP!";
-                if (drift > MAX_WRIST_DRIFT) {
-                  status = "Hands moved — rep cancelled";
-                  resetRep();
-                } else if (emaElbow > ELBOW_UP_DEG) {
-                  if (++confirm >= CONFIRM_FRAMES) {
-                    confirm = 0; phase = "up"; top = { shY: sh.y, wrX: wr.x, wrY: wr.y };
-                    if (ts - downAt >= MIN_DOWN_MS && ts - lastRepAt >= MIN_REP_MS) {
-                      reps++; lastRepAt = ts; beep(880, 120);
-                      $("count").textContent = `${reps}/${target}`;
-                      if (reps >= target) { finish(reps); return; }
-                    } else {
-                      status = "Too fast — slow down";
-                    }
-                  }
-                } else confirm = 0;
-              }
+                }
+              } else confirm = 0;
             }
           }
         } else {
