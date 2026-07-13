@@ -74,6 +74,12 @@
     text-shadow: 0 1px 6px #000; padding: 0 16px; }
   #loading { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px;
     align-items: center; justify-content: center; background: #000d; font-size: 1.1rem; color: var(--dim); }
+  #dbg { position: absolute; left: 12px; right: 12px;
+    top: calc(max(12px, env(safe-area-inset-top)) + 70px);
+    font: 12px ui-monospace, Menlo, monospace; color: #9fe870; background: #000b;
+    padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; display: none; }
+  #dbgreport { white-space: pre-wrap; font: 12px ui-monospace, Menlo, monospace;
+    color: var(--fg); overflow-x: auto; padding: 6px 0; }
 
   /* ---------- Done ---------- */
   #done { align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; }
@@ -87,6 +93,12 @@
 <section id="home" class="screen active">
   <h1>💪 Push-up Unlock</h1>
   <p class="tag">Instagram &amp; X stay locked until the camera sees real push-ups.</p>
+
+  <div class="card" id="reportcard" style="display:none">
+    <h2>Debug report — send this to Claude</h2>
+    <pre id="dbgreport"></pre>
+    <button class="ghost" id="copyreport">Copy report</button>
+  </div>
 
   <div class="card">
     <h2>Workout</h2>
@@ -137,6 +149,10 @@
     <div class="row">
       <label for="frontcam">Use front camera</label>
       <input id="frontcam" type="checkbox" checked style="width:auto; transform:scale(1.4);">
+    </div>
+    <div class="row">
+      <label for="debug">Debug overlay (live tracker readout)</label>
+      <input id="debug" type="checkbox" style="width:auto; transform:scale(1.4);">
     </div>
   </div>
 
@@ -230,6 +246,7 @@
     </div>
   </div>
   <div id="status">Loading…</div>
+  <div id="dbg"></div>
   <div id="loading">⏳ Loading pose model…<br><span style="font-size:.85em">(first load downloads ~9 MB)</span></div>
 </section>
 
@@ -259,6 +276,7 @@ const TORSO_MAX_TILT_DEG = 40, MIN_VISIBILITY = 0.6;
 const SMOOTH = 0.5;            // EMA factor for elbow angle
 const POSTURE_FRAMES = 5;      // stable posture frames before reps can count
 const CONFIRM_FRAMES = 3;      // frames past a threshold to switch phase
+const GRACE_FRAMES = 5;        // tolerate this many bad frames before resetting the rep
 const MIN_DROP_SIDE = 0.15;    // shoulder drop × torso length
 const MIN_DROP_FRONT = 0.20;   // shoulder drop × shoulder width
 const MAX_WRIST_DRIFT = 0.35;  // wrists may move at most this × body scale
@@ -279,10 +297,11 @@ const settings = {
   get shortcut() { return $("shortcut").value.trim() || "Pushups Done"; },
   get front() { return $("frontcam").checked; },
   get view() { return localStorage.getItem("pu_view") || "front"; },
+  get debug() { return $("debug").checked; },
 };
 for (const [key, el] of [["reps", $("reps")], ["minsper", $("minsper")],
                          ["shortcut", $("shortcut")], ["front", $("frontcam")],
-                         ["block", $("block")]]) {
+                         ["block", $("block")], ["debug", $("debug")]]) {
   const saved = localStorage.getItem("pu_" + key);
   if (saved !== null) { if (el.type === "checkbox") el.checked = saved === "1"; else el.value = saved; }
   el.addEventListener("change", () =>
@@ -370,6 +389,59 @@ function inPushupPosture(sh, wr, hip) {
   return tilt <= TORSO_MAX_TILT_DEG && wr.y > sh.y;
 }
 
+/* ---------- Debug capture ----------
+   With the Debug overlay on, every frame's status + measurements are kept
+   so a summary report can show which check is blocking rep counts. */
+const DBG = {
+  log: [], mode: "", target: 0, reps: 0,
+  start(mode, target) { this.log = []; this.mode = mode; this.target = target; this.reps = 0; },
+  frame(ts, status, v, nums, phase) {
+    if (this.log.length < 30000) this.log.push([ts, status, v, nums]);
+    $("dbg").textContent =
+      (nums ? `elbow ${nums[0].toFixed(0)}°  drop ${nums[1].toFixed(2)}  drift ${nums[2].toFixed(2)}  phase:${phase}\n` : "") +
+      (v !== null ? `vis ${v.toFixed(2)}  ` : "") + status;
+  },
+  report() {
+    const L = this.log;
+    if (!L.length) return "";
+    const pct = (arr, p) => arr[Math.round(p * (arr.length - 1))];
+    const dur = (L[L.length - 1][0] - L[0][0]) / 1000 || 1;
+    const reasons = {};
+    for (const [, s] of L) reasons[s] = (reasons[s] || 0) + 1;
+    let out = `Push-up Unlock debug v3 — mode: ${this.mode}, reps: ${this.reps}/${this.target}\n`
+      + `${L.length} frames / ${dur.toFixed(1)}s (${(L.length / dur).toFixed(1)} fps)\n\nstatus breakdown:\n`;
+    for (const [s, n] of Object.entries(reasons).sort((a, b) => b[1] - a[1]))
+      out += `${String(Math.round(100 * n / L.length)).padStart(4)}%  ${s}\n`;
+    const viss = L.map(r => r[2]).filter(x => x !== null).sort((a, b) => a - b);
+    if (viss.length)
+      out += `\nvisibility: min ${pct(viss, 0).toFixed(2)} / med ${pct(viss, .5).toFixed(2)} (need ≥ ${MIN_VISIBILITY})\n`;
+    const nums = L.map(r => r[3]).filter(Boolean);
+    if (nums.length) {
+      const col = i => nums.map(r => r[i]).sort((a, b) => a - b);
+      const [e, d, f] = [col(0), col(1), col(2)];
+      const front = this.mode === "front";
+      out += `elbow°: min ${pct(e, 0).toFixed(0)} / med ${pct(e, .5).toFixed(0)} / max ${pct(e, 1).toFixed(0)}`
+        + ` (down < ${front ? ELBOW_DOWN_FRONT : ELBOW_DOWN_SIDE}, up > ${ELBOW_UP_DEG})\n`
+        + `drop: med ${pct(d, .5).toFixed(2)} / max ${pct(d, 1).toFixed(2)} (need ≥ ${front ? MIN_DROP_FRONT : MIN_DROP_SIDE})\n`
+        + `drift: med ${pct(f, .5).toFixed(2)} / max ${pct(f, 1).toFixed(2)} (limit ${MAX_WRIST_DRIFT})\n`;
+    } else {
+      out += "\nNo frames passed the posture checks — the status breakdown above is the whole story.\n";
+    }
+    return out;
+  },
+  show() {
+    if (!settings.debug || !this.log.length) return;
+    $("dbgreport").textContent = this.report();
+    $("reportcard").style.display = "block";
+  },
+};
+$("copyreport").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($("dbgreport").textContent);
+    $("copyreport").textContent = "Copied ✓";
+  } catch { $("copyreport").textContent = "Copy failed — long-press the text to select it"; }
+};
+
 /* ---------- Workout loop ---------- */
 let landmarker = null, stream = null, running = false, wakeLock = null;
 
@@ -417,9 +489,11 @@ async function startWorkout() {
     let reps = 0, phase = "up", lastTs = -1;
     let sideKey = null;          // side view: stick to one arm while it stays visible
     let emaElbow = null;         // smoothed elbow angle
-    let postureCount = 0, confirm = 0;
+    let postureCount = 0, confirm = 0, badRun = 0;
     let top = null;              // {shY, wr, scale} at last extended position
     let downAt = 0, lastRepAt = 0;
+    DBG.start(mode, target);
+    $("dbg").style.display = settings.debug ? "block" : "none";
 
     const resetRep = () => { phase = "up"; confirm = 0; top = null; emaElbow = null; };
 
@@ -429,32 +503,34 @@ async function startWorkout() {
       if (mode === "side") {
         if (!sideKey || sideVis(lm, sideKey) < MIN_VISIBILITY)
           sideKey = sideVis(lm, "L") >= sideVis(lm, "R") ? "L" : "R";
-        if (sideVis(lm, sideKey) < MIN_VISIBILITY)
-          return { err: "Move so your full side is visible" };
+        const v = sideVis(lm, sideKey);
+        if (v < MIN_VISIBILITY)
+          return { err: "Move so your full side is visible", v };
         const [sh, el, wr, hip] = getSide(lm, sideKey);
         if (!inPushupPosture(sh, wr, hip))
-          return { err: "Get into push-up position (side view)" };
+          return { err: "Get into push-up position (side view)", v };
         return { elbow: angle(sh, el, wr), shY: sh.y, wr: { x: wr.x, y: wr.y },
-                 scale: Math.max(dist(sh, hip), 1e-6),
+                 scale: Math.max(dist(sh, hip), 1e-6), v,
                  minDrop: MIN_DROP_SIDE, downDeg: ELBOW_DOWN_SIDE };
       }
       /* front view: both arms, scaled by shoulder width (hips often out of frame) */
-      if (Math.min(...FRONT_IDX.map(i => vis(lm[i]))) < MIN_VISIBILITY)
-        return { err: "Face the camera — shoulders, elbows and hands in frame" };
+      const v = Math.min(...FRONT_IDX.map(i => vis(lm[i])));
+      if (v < MIN_VISIBILITY)
+        return { err: "Face the camera — shoulders, elbows and hands in frame", v };
       const lsh = lm[L_SH], rsh = lm[R_SH], lwr = lm[L_WR], rwr = lm[R_WR];
       const width = Math.max(dist(lsh, rsh), 1e-6);
-      if (width < 0.10) return { err: "Move closer to the camera" };
+      if (width < 0.10) return { err: "Move closer to the camera", v };
       if (Math.abs(lsh.y - rsh.y) > 0.5 * width)
-        return { err: "Square up to the camera" };
+        return { err: "Square up to the camera", v };
       if (lwr.y <= lsh.y || rwr.y <= rsh.y)
-        return { err: "Get into push-up position facing the camera" };
+        return { err: "Get into push-up position facing the camera", v };
       /* hips clearly visible well below the shoulders = body is upright, not planked */
       if (Math.min(vis(lm[L_HIP]), vis(lm[R_HIP])) > 0.5 &&
           (lm[L_HIP].y + lm[R_HIP].y - lsh.y - rsh.y) / 2 > 1.1 * width)
-        return { err: "Get into push-up position facing the camera" };
+        return { err: "Get into push-up position facing the camera", v };
       return { elbow: (angle(lsh, lm[L_EL], lwr) + angle(rsh, lm[R_EL], rwr)) / 2,
                shY: (lsh.y + rsh.y) / 2, wr: avg(lwr, rwr),
-               scale: width, minDrop: MIN_DROP_FRONT, downDeg: ELBOW_DOWN_FRONT };
+               scale: width, v, minDrop: MIN_DROP_FRONT, downDeg: ELBOW_DOWN_FRONT };
     };
 
     const tick = () => {
@@ -464,6 +540,7 @@ async function startWorkout() {
       }
       const ts = performance.now();
       let status = "No body detected";
+      let dvis = null, dnum = null;   // debug capture for this frame
       if (video.videoWidth && ts > lastTs) {
         lastTs = ts;
         const res = lmk.detectForVideo(video, ts);
@@ -473,9 +550,11 @@ async function startWorkout() {
           drawSkeleton(ctx, lm, canvas.width, canvas.height);
 
           const m = measure(lm);
+          dvis = m.v ?? null;
+          if (!m.err) badRun = 0;
           if (m.err) {
             status = m.err;
-            postureCount = 0; resetRep();
+            if (++badRun > GRACE_FRAMES) { postureCount = 0; resetRep(); }
           } else if (++postureCount < POSTURE_FRAMES) {
             status = "Hold it… get set";
           } else {
@@ -485,8 +564,14 @@ async function startWorkout() {
             if (phase === "up" && emaElbow > ELBOW_UP_DEG)
               top = { shY: m.shY, wr: m.wr, scale: m.scale };
 
-            const drift = top ? dist(m.wr, top.wr) / top.scale : 0;
+            /* front view: ignore vertical wrist motion — descending toward a
+               floor-propped camera scales the image and slides both wrists
+               down in frame even though the hands never move */
+            const drift = top ? (mode === "front"
+                ? Math.abs(m.wr.x - top.wr.x)
+                : dist(m.wr, top.wr)) / top.scale : 0;
             const drop = top ? (m.shY - top.shY) / top.scale : 0;
+            dnum = [emaElbow, drop, drift];
 
             if (phase === "up") {
               status = "Go DOWN";
@@ -508,7 +593,7 @@ async function startWorkout() {
                 if (++confirm >= CONFIRM_FRAMES) {
                   confirm = 0; phase = "up"; top = { shY: m.shY, wr: m.wr, scale: m.scale };
                   if (ts - downAt >= MIN_DOWN_MS && ts - lastRepAt >= MIN_REP_MS) {
-                    reps++; lastRepAt = ts; beep(880, 120);
+                    reps++; lastRepAt = ts; DBG.reps = reps; beep(880, 120);
                     $("count").textContent = `${reps}/${target}`;
                     if (reps >= target) { finish(reps); return; }
                   } else {
@@ -519,8 +604,9 @@ async function startWorkout() {
             }
           }
         } else {
-          sideKey = null; postureCount = 0; resetRep();
+          if (++badRun > GRACE_FRAMES) { sideKey = null; postureCount = 0; resetRep(); }
         }
+        if (settings.debug) DBG.frame(ts, status, dvis, dnum, phase);
       }
       $("status").textContent = status;
       requestAnimationFrame(tick);
@@ -563,6 +649,12 @@ function finish(reps) {
   earnedMinutes = reps * settings.minsper;
   beep(880, 100); setTimeout(() => beep(1175, 250), 140);
   show("done");
+  DBG.show();
+  if (settings.debug) {   // stay put so the report can be read/copied
+    $("done-msg").textContent =
+      `${reps} push-ups = ${earnedMinutes} minutes. Debug on — report is on the home screen (Back).`;
+    return;
+  }
   $("done-msg").textContent =
     `Nice work — ${reps} push-ups = ${earnedMinutes} minutes. Opening Instagram… (or pick an app)`;
   setTimeout(() => { location.href = passURL(earnedMinutes, "instagram://"); }, 1500);
@@ -570,7 +662,7 @@ function finish(reps) {
 
 /* ---------- Wire up ---------- */
 $("start").onclick = startWorkout;
-$("quit").onclick = () => { stopCamera(); show("home"); };
+$("quit").onclick = () => { stopCamera(); DBG.show(); show("home"); };
 $("flip").onclick = () => { $("frontcam").checked = !settings.front;
   localStorage.setItem("pu_front", settings.front ? "1" : "0");
   stopCamera(); startWorkout(); };
