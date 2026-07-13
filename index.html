@@ -21,13 +21,30 @@
   #home h1 { font-size: 2rem; margin-top: 24px; }
   #home p.tag { color: var(--dim); }
   .card { background: var(--card); border: 1px solid #30363d; border-radius: 14px; padding: 16px; }
+  .card h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--dim); margin-bottom: 4px; }
   .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; }
   .row label { color: var(--fg); }
   .row input { background: #0d1117; color: var(--fg); border: 1px solid #30363d;
     border-radius: 8px; padding: 8px 10px; font-size: 1rem; width: 9em; text-align: right; }
-  .row input#reps { width: 4.5em; }
+  .row input#reps, .row input#minsper { width: 4.5em; }
+  .presets { display: flex; gap: 8px; padding: 0 0 8px; }
+  .presets button { background: #21262d; color: var(--fg); border: 1px solid #30363d;
+    border-radius: 8px; padding: 6px 14px; font-size: 0.95rem; }
+  .presets button.sel { background: var(--accent); color: #04140a; border-color: var(--accent); font-weight: 700; }
+  .note { color: var(--dim); font-size: 0.85rem; padding-top: 4px; line-height: 1.4; }
+  /* iOS-style switch */
+  .switch { position: relative; width: 52px; height: 32px; flex: none; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; z-index: 2; }
+  .switch .knob { position: absolute; inset: 0; background: #30363d; border-radius: 16px; transition: background .2s; }
+  .switch .knob::after { content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px;
+    background: #fff; border-radius: 50%; transition: transform .2s; }
+  .switch input:checked + .knob { background: var(--accent); }
+  .switch input:checked + .knob::after { transform: translateX(20px); }
+
   button.big { font-size: 1.25rem; font-weight: 700; padding: 18px; border: none;
     border-radius: 14px; background: var(--accent); color: #04140a; width: 100%; }
+  button.big.alt { background: #21262d; color: var(--fg); border: 1px solid #30363d; }
   button.ghost { background: none; border: 1px solid #30363d; color: var(--dim);
     border-radius: 12px; padding: 12px; font-size: 1rem; width: 100%; }
   details { margin-top: 6px; }
@@ -59,7 +76,7 @@
     align-items: center; justify-content: center; background: #000d; font-size: 1.1rem; color: var(--dim); }
 
   /* ---------- Done ---------- */
-  #done { align-items: center; justify-content: center; gap: 20px; padding: 24px; text-align: center; }
+  #done { align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; }
   #done h1 { color: var(--accent); font-size: 3rem; }
   #done p { color: var(--dim); max-width: 30em; }
 </style>
@@ -72,10 +89,40 @@
   <p class="tag">Instagram &amp; X stay locked until the camera sees real push-ups.</p>
 
   <div class="card">
+    <h2>Workout</h2>
     <div class="row">
       <label for="reps">Push-ups required</label>
       <input id="reps" type="number" inputmode="numeric" min="1" max="100" value="10">
     </div>
+    <div class="row">
+      <label for="minsper">Minutes earned per push-up</label>
+      <input id="minsper" type="number" inputmode="numeric" min="1" max="60" value="3">
+    </div>
+    <div class="presets" id="minpresets">
+      <button data-v="1">1 min</button>
+      <button data-v="3" class="sel">3 min</button>
+      <button data-v="5">5 min</button>
+      <button data-v="10">10 min</button>
+    </div>
+    <p class="note" id="earnnote"></p>
+  </div>
+
+  <div class="card">
+    <h2>Blocking</h2>
+    <div class="row">
+      <label for="block">Block apps on this phone</label>
+      <span class="switch">
+        <input id="block" type="checkbox" checked>
+        <span class="knob"></span>
+      </span>
+    </div>
+    <p class="note">Flipping this opens Shortcuts for a moment to apply.
+      <b>Off</b> = apps open freely (writes a long pass). <b>On</b> = locked again
+      right now (ends any active pass).</p>
+  </div>
+
+  <div class="card">
+    <h2>Camera &amp; Shortcut</h2>
     <div class="row">
       <label for="shortcut">Unlock Shortcut name</label>
       <input id="shortcut" type="text" value="Pushups Done" autocapitalize="words">
@@ -88,7 +135,8 @@
 
   <button class="big" id="start">Start push-ups</button>
   <p class="err" id="camerr"></p>
-  <p class="guide" style="text-align:center">Prop the phone to your <b>side</b>, ~2&nbsp;m away, whole body in frame.</p>
+  <p class="guide" style="text-align:center">Prop the phone to your <b>side</b>, ~2&nbsp;m away,
+    whole body in frame. Reps only count with real depth — shoulders must travel down and up.</p>
 
   <details>
     <summary>📱 One-time iPhone setup (Shortcuts)</summary>
@@ -97,29 +145,34 @@
       gate Instagram/X. Everything below is done in the built-in
       <b>Shortcuts</b> app — no other downloads, no accounts.</p>
 
-      <h3>Shortcut 1 — "Pushups Done" (grants 30 min)</h3>
+      <h3>Shortcut 1 — "Pushups Done" (saves your earned pass)</h3>
+      <p>This page tells the Shortcut how many minutes you earned
+      (push-ups × minutes-per-push-up), so the Shortcut must use its input
+      instead of a fixed number.</p>
       <ol>
         <li>Shortcuts app → <b>+</b> → name it exactly <code>Pushups Done</code>
             (must match the name in the box above).</li>
-        <li>Add action <b>Date</b> → Current Date.</li>
-        <li>Add action <b>Adjust Date</b> → "Add <code>30</code> minutes to Date".
-            (This is your unlock length — change it here.)</li>
+        <li>Add action <b>Adjust Date</b>. Tap the date → choose <b>Current
+            Date</b>. Tap the number → <b>Select Variable</b> → <b>Shortcut
+            Input</b>. Set the unit to <b>minutes</b>, so it reads
+            "Add <code>Shortcut Input</code> minutes to Current Date".</li>
         <li>Add action <b>Format Date</b> → Date Format: <b>ISO 8601</b>,
             Time: ISO 8601 (include time).</li>
         <li>Add action <b>Save File</b> → turn <b>Ask Where To Save OFF</b> →
             Service: iCloud Drive → path <code>/Shortcuts/pushup-unlock.txt</code> →
             turn <b>Overwrite If File Exists ON</b>.</li>
-        <li>Add action <b>Open App</b> → Instagram.</li>
       </ol>
+      <p><b>Do not</b> add an Open App action — this page reopens your app
+      itself. <b>Already built the old version?</b> Just edit it: replace the
+      fixed "30" in Adjust Date with the <code>Shortcut Input</code> variable,
+      and delete the Open App step.</p>
 
       <h3>Shortcut 2 — "Pushup Gate" (runs when you open the app)</h3>
       <ol>
         <li>New shortcut, name it <code>Pushup Gate</code>.</li>
         <li>Add action <b>Get File</b> → iCloud Drive →
             path <code>/Shortcuts/pushup-unlock.txt</code> →
-            turn <b>Show Document Picker OFF</b>, and turn ON
-            "Error If Not Found" → then tap the action's arrow and
-            wrap it: if it errors the first run, that's fine — see step 5.</li>
+            turn <b>Show Document Picker OFF</b>.</li>
         <li>Add action <b>Get Dates from Input</b> (input: File).</li>
         <li>Add action <b>If</b> → Dates → Condition: <b>is in the past</b> …
             iOS wording: choose <b>If [Date] is before [Current Date]</b>.</li>
@@ -140,11 +193,12 @@
       </ol>
 
       <h3>How it flows</h3>
-      <p>Open Instagram → automation runs the Gate → unlock expired → Safari
+      <p>Open Instagram → automation runs the Gate → pass expired → Safari
       opens this page over the app → do your push-ups → the page runs
-      <code>Pushups Done</code> → 30-min pass is written → Instagram reopens.
-      When the pass expires, the next app-open kicks you back here. To pause
-      the whole system, toggle the two automations off in the Shortcuts app.</p>
+      <code>Pushups Done</code> with your earned minutes → the pass is written
+      → your app reopens. When the pass expires, the next app-open kicks you
+      back here. The <b>Block apps</b> toggle above uses the same mechanism:
+      off writes a ~10-year pass, on writes an already-expired one.</p>
 
       <h3>Honest limitations</h3>
       <p>Like the Mac version, this is friction, not a prison: you can swipe
@@ -170,14 +224,15 @@
     </div>
   </div>
   <div id="status">Loading…</div>
-  <div id="loading">⏳ Loading pose model…<br><span style="font-size:.85em">(first load downloads ~6 MB)</span></div>
+  <div id="loading">⏳ Loading pose model…<br><span style="font-size:.85em">(first load downloads ~9 MB)</span></div>
 </section>
 
 <!-- ================= DONE ================= -->
 <section id="done" class="screen">
   <h1>UNLOCKED!</h1>
-  <p id="done-msg">Nice work. Opening your unlock Shortcut…</p>
-  <button class="big" id="runshortcut">Open Instagram (run Shortcut)</button>
+  <p id="done-msg">Nice work.</p>
+  <button class="big" id="open-ig">Open Instagram</button>
+  <button class="big alt" id="open-x">Open X</button>
   <button class="ghost" id="again">Back</button>
 </section>
 
@@ -185,10 +240,22 @@
 import { PoseLandmarker, FilesetResolver } from
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-/* ---------- Tuning (mirrors detector.py) ---------- */
-const ELBOW_DOWN_DEG = 95, ELBOW_UP_DEG = 150;
-const TORSO_MAX_TILT_DEG = 45, MIN_VISIBILITY = 0.5;
+/* ---------- Tuning ----------
+   Stricter than detector.py: a rep needs the elbow angle to cross both
+   thresholds on a SMOOTHED signal, held for CONFIRM_FRAMES, with the
+   shoulder actually travelling down (MIN_DROP of torso length), hands
+   staying planted (MAX_WRIST_DRIFT), and realistic timing. */
+const ELBOW_DOWN_DEG = 100, ELBOW_UP_DEG = 150;
+const TORSO_MAX_TILT_DEG = 40, MIN_VISIBILITY = 0.6;
+const SMOOTH = 0.5;            // EMA factor for elbow angle
+const POSTURE_FRAMES = 5;      // stable posture frames before reps can count
+const CONFIRM_FRAMES = 3;      // frames past a threshold to switch phase
+const MIN_DROP = 0.15;         // shoulder must drop this × torso length
+const MAX_WRIST_DRIFT = 0.35;  // wrist may move at most this × torso length
+const MIN_DOWN_MS = 250;       // min time spent at the bottom
+const MIN_REP_MS = 700;        // min time between counted reps
 const L_SH = 11, R_SH = 12, L_EL = 13, R_EL = 14, L_WR = 15, R_WR = 16, L_HIP = 23, R_HIP = 24;
+const SIDES = { L: [L_SH, L_EL, L_WR, L_HIP], R: [R_SH, R_EL, R_WR, R_HIP] };
 const SKELETON = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[24,26],[25,27],[26,28]];
 
 /* ---------- Elements / settings ---------- */
@@ -198,10 +265,13 @@ function show(name) { for (const k in screens) screens[k].classList.toggle("acti
 
 const settings = {
   get reps() { return Math.max(1, parseInt($("reps").value) || 10); },
+  get minsper() { return Math.max(1, parseInt($("minsper").value) || 3); },
   get shortcut() { return $("shortcut").value.trim() || "Pushups Done"; },
   get front() { return $("frontcam").checked; },
 };
-for (const [key, el] of [["reps", $("reps")], ["shortcut", $("shortcut")], ["front", $("frontcam")]]) {
+for (const [key, el] of [["reps", $("reps")], ["minsper", $("minsper")],
+                         ["shortcut", $("shortcut")], ["front", $("frontcam")],
+                         ["block", $("block")]]) {
   const saved = localStorage.getItem("pu_" + key);
   if (saved !== null) { if (el.type === "checkbox") el.checked = saved === "1"; else el.value = saved; }
   el.addEventListener("change", () =>
@@ -209,28 +279,39 @@ for (const [key, el] of [["reps", $("reps")], ["shortcut", $("shortcut")], ["fro
 }
 $("pageurl").textContent = location.href;
 
-/* ---------- Pose helpers (ported from detector.py) ---------- */
-const vis = p => p.visibility ?? 1.0;
-function angle(a, b, c) {
-  const v1 = [a.x - b.x, a.y - b.y], v2 = [c.x - b.x, c.y - b.y];
-  const n1 = Math.hypot(...v1), n2 = Math.hypot(...v2);
-  if (n1 * n2 === 0) return 180;
-  const cos = Math.max(-1, Math.min(1, (v1[0]*v2[0] + v1[1]*v2[1]) / (n1 * n2)));
-  return Math.acos(cos) * 180 / Math.PI;
+function refreshEarnNote() {
+  $("earnnote").textContent =
+    `${settings.reps} push-ups → ${settings.reps * settings.minsper} minutes of app time.`;
+  for (const b of $("minpresets").querySelectorAll("button"))
+    b.classList.toggle("sel", parseInt(b.dataset.v) === settings.minsper);
 }
-function pickSide(lm) {
-  let best = null, bestVis = 0;
-  for (const idx of [[L_SH, L_EL, L_WR, L_HIP], [R_SH, R_EL, R_WR, R_HIP]]) {
-    const pts = idx.map(i => lm[i]);
-    const v = Math.min(...pts.map(vis));
-    if (v > bestVis) { best = pts; bestVis = v; }
-  }
-  return bestVis < MIN_VISIBILITY ? null : best;
+$("reps").addEventListener("input", refreshEarnNote);
+$("minsper").addEventListener("input", refreshEarnNote);
+$("minpresets").addEventListener("click", e => {
+  const v = e.target.dataset?.v;
+  if (!v) return;
+  $("minsper").value = v;
+  localStorage.setItem("pu_minsper", v);
+  refreshEarnNote();
+});
+refreshEarnNote();
+
+/* ---------- Shortcut bridge ----------
+   The page passes earned MINUTES as the Shortcut's text input; the Shortcut
+   adds them to the current date and saves the pass file. x-success bounces
+   us onward (an app, or back to this page). */
+const pageURL = () => location.origin + location.pathname;
+function passURL(minutes, dest) {
+  return "shortcuts://x-callback-url/run-shortcut?name=" + encodeURIComponent(settings.shortcut)
+    + "&input=text&text=" + encodeURIComponent(String(minutes))
+    + "&x-success=" + encodeURIComponent(dest);
 }
-function inPushupPosture(sh, wr, hip) {
-  const tilt = Math.atan2(Math.abs(hip.y - sh.y), Math.abs(hip.x - sh.x) + 1e-6) * 180 / Math.PI;
-  return tilt <= TORSO_MAX_TILT_DEG && wr.y > sh.y;
-}
+
+/* Block toggle: OFF grants a ~10-year pass, ON writes an already-expired one. */
+const TEN_YEARS_MIN = 5256000;
+$("block").addEventListener("change", () => {
+  location.href = passURL($("block").checked ? 0 : TEN_YEARS_MIN, pageURL());
+});
 
 /* ---------- Audio cue ---------- */
 let actx = null;
@@ -245,6 +326,23 @@ function beep(freq = 880, ms = 120) {
   } catch {}
 }
 
+/* ---------- Pose helpers ---------- */
+const vis = p => p.visibility ?? 1.0;
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function angle(a, b, c) {
+  const v1 = [a.x - b.x, a.y - b.y], v2 = [c.x - b.x, c.y - b.y];
+  const n1 = Math.hypot(...v1), n2 = Math.hypot(...v2);
+  if (n1 * n2 === 0) return 180;
+  const cos = Math.max(-1, Math.min(1, (v1[0]*v2[0] + v1[1]*v2[1]) / (n1 * n2)));
+  return Math.acos(cos) * 180 / Math.PI;
+}
+function sideVis(lm, key) { return Math.min(...SIDES[key].map(i => vis(lm[i]))); }
+function getSide(lm, key) { return SIDES[key].map(i => lm[i]); }
+function inPushupPosture(sh, wr, hip) {
+  const tilt = Math.atan2(Math.abs(hip.y - sh.y), Math.abs(hip.x - sh.x) + 1e-6) * 180 / Math.PI;
+  return tilt <= TORSO_MAX_TILT_DEG && wr.y > sh.y;
+}
+
 /* ---------- Workout loop ---------- */
 let landmarker = null, stream = null, running = false, wakeLock = null;
 
@@ -254,7 +352,7 @@ async function getLandmarker() {
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
   landmarker = await PoseLandmarker.createFromOptions(files, {
     baseOptions: {
-      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
       delegate: "GPU",
     },
     runningMode: "VIDEO", numPoses: 1,
@@ -285,8 +383,17 @@ async function startWorkout() {
 
     $("loading").style.display = "none";
     running = true;
-    let reps = 0, phase = "up", lastTs = -1;
     const canvas = $("overlay"), ctx = canvas.getContext("2d");
+
+    /* rep-detection state */
+    let reps = 0, phase = "up", lastTs = -1;
+    let sideKey = null;          // stick to one arm while posture holds
+    let emaElbow = null;         // smoothed elbow angle
+    let postureCount = 0, confirm = 0;
+    let top = null;              // {shY, wrX, wrY} at last extended position
+    let downAt = 0, lastRepAt = 0;
+
+    const resetRep = () => { phase = "up"; confirm = 0; top = null; emaElbow = null; };
 
     const tick = () => {
       if (!running) return;
@@ -302,26 +409,67 @@ async function startWorkout() {
         if (res.landmarks?.length) {
           const lm = res.landmarks[0];
           drawSkeleton(ctx, lm, canvas.width, canvas.height);
-          const side = pickSide(lm);
-          if (side) {
-            const [sh, el, wr, hip] = side;
-            const elbow = angle(sh, el, wr);
+
+          /* pick an arm and stick with it while it stays visible */
+          if (!sideKey || sideVis(lm, sideKey) < MIN_VISIBILITY)
+            sideKey = sideVis(lm, "L") >= sideVis(lm, "R") ? "L" : "R";
+
+          if (sideVis(lm, sideKey) < MIN_VISIBILITY) {
+            status = "Move so your full side is visible";
+            postureCount = 0; resetRep();
+          } else {
+            const [sh, el, wr, hip] = getSide(lm, sideKey);
+            const torso = Math.max(dist(sh, hip), 1e-6);
+
             if (!inPushupPosture(sh, wr, hip)) {
               status = "Get into push-up position (side view)";
-            } else if (phase === "up") {
-              status = "Go DOWN";
-              if (elbow < ELBOW_DOWN_DEG) { phase = "down"; beep(440, 80); }
+              postureCount = 0; resetRep();
+            } else if (++postureCount < POSTURE_FRAMES) {
+              status = "Hold it… get set";
             } else {
-              status = "Push UP!";
-              if (elbow > ELBOW_UP_DEG) {
-                reps++; phase = "up"; beep(880, 120);
-                $("count").textContent = `${reps}/${target}`;
-                if (reps >= target) { finish(); return; }
+              const raw = angle(sh, el, wr);
+              emaElbow = emaElbow === null ? raw : SMOOTH * raw + (1 - SMOOTH) * emaElbow;
+
+              /* refresh the "top" reference whenever arms are extended */
+              if (phase === "up" && emaElbow > ELBOW_UP_DEG)
+                top = { shY: sh.y, wrX: wr.x, wrY: wr.y };
+
+              const drift = top ? Math.hypot(wr.x - top.wrX, wr.y - top.wrY) / torso : 0;
+              const drop = top ? (sh.y - top.shY) / torso : 0;
+
+              if (phase === "up") {
+                status = "Go DOWN";
+                if (emaElbow < ELBOW_DOWN_DEG) {
+                  if (!top) status = "Extend your arms first";
+                  else if (drift > MAX_WRIST_DRIFT) { status = "Keep your hands planted"; confirm = 0; }
+                  else if (drop < MIN_DROP) { status = "Lower — chest toward the floor"; confirm = 0; }
+                  else if (++confirm >= CONFIRM_FRAMES) {
+                    phase = "down"; confirm = 0; downAt = ts; beep(440, 80);
+                  }
+                } else confirm = 0;
+              }
+              if (phase === "down") {
+                status = "Push UP!";
+                if (drift > MAX_WRIST_DRIFT) {
+                  status = "Hands moved — rep cancelled";
+                  resetRep();
+                } else if (emaElbow > ELBOW_UP_DEG) {
+                  if (++confirm >= CONFIRM_FRAMES) {
+                    confirm = 0; phase = "up"; top = { shY: sh.y, wrX: wr.x, wrY: wr.y };
+                    if (ts - downAt >= MIN_DOWN_MS && ts - lastRepAt >= MIN_REP_MS) {
+                      reps++; lastRepAt = ts; beep(880, 120);
+                      $("count").textContent = `${reps}/${target}`;
+                      if (reps >= target) { finish(reps); return; }
+                    } else {
+                      status = "Too fast — slow down";
+                    }
+                  }
+                } else confirm = 0;
               }
             }
-          } else {
-            status = "Move so your full side is visible";
           }
+        } else {
+          sideKey = null; postureCount = 0; resetRep();
         }
       }
       $("status").textContent = status;
@@ -359,16 +507,15 @@ function stopCamera() {
   wakeLock?.release().catch(() => {}); wakeLock = null;
 }
 
-function shortcutURL() {
-  return `shortcuts://run-shortcut?name=${encodeURIComponent(settings.shortcut)}`;
-}
-
-function finish() {
+let earnedMinutes = 0;
+function finish(reps) {
   stopCamera();
+  earnedMinutes = reps * settings.minsper;
   beep(880, 100); setTimeout(() => beep(1175, 250), 140);
   show("done");
-  $("done-msg").textContent = `Nice work. Running Shortcut “${settings.shortcut}”…`;
-  setTimeout(() => { location.href = shortcutURL(); }, 1200);
+  $("done-msg").textContent =
+    `Nice work — ${reps} push-ups = ${earnedMinutes} minutes. Opening Instagram… (or pick an app)`;
+  setTimeout(() => { location.href = passURL(earnedMinutes, "instagram://"); }, 1500);
 }
 
 /* ---------- Wire up ---------- */
@@ -377,7 +524,8 @@ $("quit").onclick = () => { stopCamera(); show("home"); };
 $("flip").onclick = () => { $("frontcam").checked = !settings.front;
   localStorage.setItem("pu_front", settings.front ? "1" : "0");
   stopCamera(); startWorkout(); };
-$("runshortcut").onclick = () => { location.href = shortcutURL(); };
+$("open-ig").onclick = () => { location.href = passURL(earnedMinutes, "instagram://"); };
+$("open-x").onclick = () => { location.href = passURL(earnedMinutes, "twitter://"); };
 $("again").onclick = () => show("home");
 </script>
 </body>
